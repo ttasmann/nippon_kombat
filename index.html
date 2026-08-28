@@ -299,10 +299,14 @@ function readTouch(list){
   TIN[0] = st2[0]; TIN[1] = st2[1];
 }
 const TPULSE = [{},{}];
+const TAPQ = [];
 ['touchstart','touchmove','touchend','touchcancel'].forEach(ev =>
   addEventListener(ev, e => { e.preventDefault(); readTouch(e.touches);
-    if (ev === 'touchstart'){ anyTap = true; if (typeof tryFS === 'function') tryFS(); } }, {passive:false}));
-addEventListener('mousedown', () => { anyTap = true; });
+    if (ev === 'touchstart'){ anyTap = true;
+      for (const t of e.changedTouches) TAPQ.push({x: t.clientX*(DW/innerWidth), y: t.clientY*(DH/innerHeight)});
+      if (typeof tryFS === 'function') tryFS(); } }, {passive:false}));
+addEventListener('mousedown', e => { anyTap = true;
+  TAPQ.push({x: e.clientX*(DW/innerWidth), y: e.clientY*(DH/innerHeight)}); });
 let anyTap = false;
 
 function held(p, k){ return !!TIN[p][k] || !!K[KEYS[p][k]]; }
@@ -683,7 +687,7 @@ function drawSelect(g){
   }
   ctxt(g, VW/2, 150, 'P' + (st.selLock[0] ? '1 READY' : '1 CHOOSING') + '   P' + (st.selLock[1] ? '2 READY' : '2 CHOOSING'),
        st.selLock[0] && st.selLock[1] ? '#24DB49' : '#FF2424', 1);
-  ctxt(g, VW/2, 172, 'LEFT / RIGHT TO MOVE - ANY PUNCH TO LOCK', '#6D6D92', 1);
+  ctxt(g, VW/2, 172, 'TAP A FIGHTER - OR ANY BUTTON TO LOCK', '#6D6D92', 1);
   ctxt(g, VW/2, 190, '2 OF 8 BUILT - THE REST NEED YOUR VIDEO', '#492449', 1);
 }
 
@@ -713,7 +717,7 @@ function drawStageSel(g){
   ctxt(g, VW/2, 130, s.sub, '#9292B6', 1);
   ctxt(g, VW/2, 150, 'EITHER PLAYER MAY CHOOSE', '#DBDBDB', 1);
   ctxt(g, VW/2, 164, 'STAGE FATALITY: ' + s.ko, '#FF2424', 1);
-  if ((st.t/28|0)%2) ctxt(g, VW/2, 186, 'ANY PUNCH TO CONFIRM - HOLD BLOCK FOR RANDOM', '#24DBDB', 1);
+  if ((st.t/28|0)%2) ctxt(g, VW/2, 186, 'TAP A STAGE - HOLD BLOCK FOR RANDOM', '#24DBDB', 1);
 }
 
 function drawVS(g){
@@ -806,6 +810,9 @@ function sampleInput(){
 }
 const down = (p,k) => curI[p][k] && !lastI[p][k];
 const punch = p => down(p,'LP') || down(p,'HP');
+const anyAtk = p => punch(p) || down(p,'LK') || down(p,'HK');
+function takeTaps(){ const t = TAPQ.slice(); TAPQ.length = 0; return t; }
+function tapToBuf(t){ return { x: (t.x - OX) / SC, y: (t.y - OY) / SC, side: t.x < DW/2 ? 0 : 1 }; }
 const anyBtn = p => punch(p) || down(p,'LK') || down(p,'HK');
 function anyPress(){ return anyBtn(0) || anyBtn(1) || anyTap; }
 
@@ -994,6 +1001,7 @@ function update(){
   const active = KL.some(k => curI[0][k] || curI[1][k]) || anyTap;
   st.padA = active ? 1 : Math.max(.10, (st.padA||1) - .012);
 
+  if (st.scr !== 'select' && st.scr !== 'stage') TAPQ.length = 0;
   if (st.scr === 'boot'){
     if (st.t > 96 || anyPress()){ st.scr = 'title'; st.t = 0; anyTap = false; }
   }
@@ -1007,11 +1015,22 @@ function update(){
     anyTap = false;
   }
   else if (st.scr === 'select'){
+    for (const raw of takeTaps()){
+      const t = tapToBuf(raw);
+      if (t.y > 8 && t.y < 104){
+        const n = 4, cw = 44, gp = 8, x0 = (VW - (n*cw + (n-1)*gp))/2;
+        for (let i = 0; i < ROSTER.length; i++){
+          const x = x0 + i*(cw+gp);
+          if (t.x >= x-4 && t.x <= x+cw+4){ const p = t.side;
+            if (!st.selLock[p]){ st.selCur[p] = i; st.selLock[p] = 1; AU.sfx('conf'); } }
+        }
+      }
+    }
     for (let p = 0; p < 2; p++){
       if (st.selLock[p]) continue;
       if (down(p,'L')){ st.selCur[p] = Math.max(0, st.selCur[p]-1); AU.sfx('blip'); }
       if (down(p,'R')){ st.selCur[p] = Math.min(3, st.selCur[p]+1); AU.sfx('blip'); }
-      if (punch(p) && st.selCur[p] < ROSTER.length){ st.selLock[p] = 1; AU.sfx('conf'); }
+      if (anyAtk(p) && st.selCur[p] < ROSTER.length){ st.selLock[p] = 1; AU.sfx('conf'); }
     }
     if (st.selLock[0] && st.selLock[1]){
       st.chars = [ROSTER[st.selCur[0]], ROSTER[st.selCur[1]]];
@@ -1021,10 +1040,20 @@ function update(){
     anyTap = false;
   }
   else if (st.scr === 'stage'){
+    for (const raw of takeTaps()){
+      const t = tapToBuf(raw);
+      if (t.y > 36 && t.y < 100){
+        const n = 5, cw = 56, gp = 8, x0 = (VW - (n*cw + (n-1)*gp))/2;
+        for (let i = 0; i < STAGES.length; i++){
+          const x = x0 + i*(cw+gp);
+          if (t.x >= x-4 && t.x <= x+cw+4){ st.stgCur = i; st.stgLock = 1; AU.sfx('conf'); }
+        }
+      }
+    }
     for (let p = 0; p < 2; p++){
       if (down(p,'L')){ st.stgCur = Math.max(0, st.stgCur-1); AU.sfx('blip'); }
       if (down(p,'R')){ st.stgCur = Math.min(STAGES.length-1, st.stgCur+1); AU.sfx('blip'); }
-      if (punch(p)){ st.stgLock = 1; AU.sfx('conf'); }
+      if (anyAtk(p)){ st.stgLock = 1; AU.sfx('conf'); }
       if (held(p,'BL') && st.t > 20 && !st.stgLock){ st.stgCur = (Math.random()*STAGES.length)|0; st.stgLock = 1; AU.sfx('conf'); }
     }
     if (st.stgLock){
